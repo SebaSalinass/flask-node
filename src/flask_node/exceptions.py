@@ -54,3 +54,7 @@ class AssetConflictError(NodeError):
 
 class AssetPublicationError(NodeError):
     pass
+
+
+class EntryResolutionError(NodeError):
+    """An installed package entry is unavailable, unsafe, or unsupported."""

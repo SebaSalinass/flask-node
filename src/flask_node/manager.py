@@ -8,6 +8,7 @@ from typing import Any
 
 from .assets import NodeAsset, destination_path, publish, validate_tree
 from .config import read_configuration
+from .entry import resolve_entry, validate_subpath
 from .exceptions import (
     AssetConflictError,
     AssetPublicationError,
@@ -318,6 +319,16 @@ class NodeManager:
 
     def resolve(self, name: str, asset: str | Path) -> Path:
         return self.package(name).resolve(asset)
+
+    def resolve_entry(self, name: str, subpath: str | None = None) -> Path:
+        """Resolve an installed entry using Node's require conditions, without loading it."""
+        validate_name(name)
+        subpath = validate_subpath(subpath)
+        package = self.package(name)
+        specifier = name if subpath is None else f"{name}/{subpath}"
+        return resolve_entry(
+            self.runner, self.node_bin, self.directory, package.root, specifier
+        )
 
     def status(self) -> dict[str, Any]:
         return {

@@ -210,6 +210,78 @@ packages raise `PackageNotFoundError`; unsafe or missing assets raise
 `AssetResolutionError`. This is filesystem path validation, not protection
 against concurrent malicious filesystem changes.
 
+## Installed package entries
+
+After packages have been installed explicitly, consumers can resolve their
+JavaScript entry points through either the manager or the `Node` facade:
+
+```python
+entry = manager.resolve_entry("example")
+plugin = manager.resolve_entry("example", "plugin")
+scoped_entry = manager.resolve_entry("@scope/plugin")
+# Equivalent, inside the current application's context:
+entry = node.resolve_entry("example")
+```
+
+`resolve_entry(name, subpath=None)` returns an absolute, existing regular-file
+`pathlib.Path`. Package and subpath are separate arguments; do not put a subpath
+in `name`. Only locally installed packages under the manager's `node_modules`
+are accepted. Resolution is anchored to that manager, independent of the Python
+process's working directory or the location of consumer-owned source files.
+It does not require or generate a managed project manifest.
+
+The resolver invokes the configured `NODE_BIN` through `CommandRunner` and uses
+Node's `module.createRequire(...).resolve(...)`. It never loads or evaluates the
+target package, installs packages, invokes npm/npx, downloads files, copies
+assets, or writes helper files. Invoke it during an explicit consumer operation
+after installation; Flask-Node does not resolve entries or run processes during
+normal Flask initialization.
+
+Resolution follows Node's **require** semantics:
+
+- `exports`, when present, takes precedence over `main` and controls which root
+  and subpath entries are accessible. Blocked/private subpaths fail even when a
+  matching file exists.
+- Conditional exports use Node's active require conditions, including `node`,
+  `require`, and applicable `default` branches, in manifest order. An
+  `import`-only entry is unavailable. Additional conditions supplied by the Node
+  runtime/configuration, such as version-dependent `module-sync`, follow Node's
+  own behavior; Flask-Node does not emulate or override them.
+- Without `exports`, Node uses `main` and its legacy file/directory lookup,
+  including `.js`, `.json`, `.node` extension probing and index fallbacks.
+  Export targets require their exact files; legacy extension/index probing does
+  not apply to those targets. Nonstandard fields such as `module` are not used.
+
+These semantics suit consumers using require-style JavaScript plugin resolution.
+Consumers needing import-condition selection must not assume this API selects
+that branch. Resolution is separate from loading: a returned path may identify
+ESM, JSON, or a native addon, and does not guarantee that a consumer's loader can
+execute it. See Node's [resolution documentation](https://nodejs.org/api/modules.html#requireresolverequest-options)
+and [conditional exports](https://nodejs.org/api/packages.html#conditional-exports).
+
+Package names use the existing registry-name validation. A supplied subpath must
+be a nonempty relative string with no empty, `.` or `..` segments, absolute or
+Windows drive paths, backslashes, NULs, or percent encoding. The package,
+`node_modules`, and package manifest follow the existing symlink containment
+checks. The resolved entry must remain within that installed package's resolved
+root; internal symlinks are allowed, escaping symlinks are rejected. Ancestor or
+global packages, built-ins, directories, and other non-file results are
+unsupported. These are filesystem checks, not protection against concurrent
+malicious filesystem changes.
+
+Invalid package names raise `ConfigurationError`; missing or malformed installed
+packages raise `PackageNotFoundError`; package containment failures retain
+`AssetResolutionError`. Entry validation, Node resolution failures, and invalid
+results raise the publicly exported `EntryResolutionError`, derived from
+`NodeError`, with the requested entry and Node error code/message where available.
+Missing Node and runner failures propagate as `ExecutableNotFoundError` and
+`CommandExecutionError`; command diagnostics remain intact. Invalid resolver
+responses include captured output in the error. Existing `resolve(name, asset)`
+continues to resolve explicit filesystem paths and does not consult `exports`.
+
+Package-entry resolution is available starting with **0.2.0**. Consumer
+extensions using this API should declare `Flask-Node>=0.2.0`.
+
 ## Publishing browser assets
 
 Consuming extensions choose which npm dependencies and browser assets they need.
@@ -303,7 +375,8 @@ python -m venv .venv
 ```
 
 Tests inject/mock the runner and subprocess boundary. They never download npm
-packages or require Node. A custom runner can be supplied to `Node(runner=...)`
+packages. Offline integration tests use temporary fake packages and real Node
+when available; pytest reports explicit skips when Node is unavailable. A custom runner can be supplied to `Node(runner=...)`
 or `NodeManager(..., runner=...)` for testing. This dependency injection is not a
 consumer plugin protocol.
 

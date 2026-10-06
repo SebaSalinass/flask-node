@@ -113,6 +113,9 @@ class Node:
     def resolve(self, name: str, asset: str | Path) -> Path:
         return self.get_manager().resolve(name, asset)
 
+    def resolve_entry(self, name: str, subpath: str | None = None) -> Path:
+        return self.get_manager().resolve_entry(name, subpath)
+
     @property
     def assets(self) -> tuple[NodeAsset, ...]:
         return self.get_manager().assets
