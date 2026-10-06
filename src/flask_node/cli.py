@@ -87,3 +87,13 @@ def npm(manager, args):
 def npx(manager, args):
     """Forward arguments to npx in the managed directory."""
     manager.npx(*args, capture_output=False)
+
+
+@node_cli.command()
+@operation
+def publish(manager):
+    """Publish registered npm assets into Flask static."""
+    paths = manager.publish_assets()
+    for asset, path in zip(manager.assets, paths):
+        click.echo(f"{asset.package}: {asset.source} -> {path}")
+    click.echo(f"{len(paths)} assets published.")

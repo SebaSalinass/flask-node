@@ -46,3 +46,11 @@ class PackageNotFoundError(NodeError):
 
 class AssetResolutionError(NodeError):
     pass
+
+
+class AssetConflictError(NodeError):
+    pass
+
+
+class AssetPublicationError(NodeError):
+    pass

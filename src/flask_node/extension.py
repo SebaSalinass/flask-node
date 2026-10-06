@@ -5,6 +5,7 @@ from typing import Any
 
 from flask import Flask, current_app
 
+from .assets import NodeAsset
 from .exceptions import ConfigurationError
 from .manager import NodeManager
 from .package import Package
@@ -55,6 +56,7 @@ class Node:
             npx_bin=app.config["NODE_NPX_BIN"],
             runner=self._runner,
             pyproject=pyproject.resolve(),
+            static_folder=Path(app.static_folder) if app.static_folder else None,
         )
         from .cli import node_cli
 
@@ -110,6 +112,23 @@ class Node:
 
     def resolve(self, name: str, asset: str | Path) -> Path:
         return self.get_manager().resolve(name, asset)
+
+    @property
+    def assets(self) -> tuple[NodeAsset, ...]:
+        return self.get_manager().assets
+
+    def register_asset(
+        self, package: str, source: str | Path, destination: str | Path
+    ) -> NodeAsset:
+        return self.get_manager().register_asset(package, source, destination)
+
+    def publish_asset(
+        self, package: str, source: str | Path, destination: str | Path
+    ) -> Path:
+        return self.get_manager().publish_asset(package, source, destination)
+
+    def publish_assets(self) -> tuple[Path, ...]:
+        return self.get_manager().publish_assets()
 
     def status(self) -> dict[str, Any]:
         return self.get_manager().status()

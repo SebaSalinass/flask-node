@@ -1,12 +1,16 @@
 """Application-local Node project lifecycle and dependency operations."""
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .assets import NodeAsset, destination_path, publish, validate_tree
 from .config import read_configuration
 from .exceptions import (
+    AssetConflictError,
+    AssetPublicationError,
     AssetResolutionError,
     ConfigurationError,
     DependencyConflictError,
@@ -33,7 +37,10 @@ class NodeManager:
         npx_bin: str = "npx",
         runner: CommandRunner | None = None,
         pyproject: Path | None = None,
+        static_folder: Path | None = None,
     ):
+        self.static_folder = static_folder
+        self._assets: dict[str, NodeAsset] = {}
         self.directory = directory.resolve()
         self.node_bin, self.npm_bin, self.npx_bin = node_bin, npm_bin, npx_bin
         self.runner = runner if runner is not None else CommandRunner()
@@ -46,6 +53,73 @@ class NodeManager:
                     self.require(name, version, dev=dev)
             self._application_requirements = self._requirements.copy()
             self._requirements.clear()
+
+    @property
+    def assets(self) -> tuple[NodeAsset, ...]:
+        return tuple(self._assets[key] for key in sorted(self._assets))
+
+    def _check_asset_conflict(self, asset: NodeAsset) -> None:
+        target = Path(asset.destination)
+        for previous in self.assets:
+            existing = Path(previous.destination)
+            if previous != asset and (
+                target == existing
+                or target.is_relative_to(existing)
+                or existing.is_relative_to(target)
+            ):
+                raise AssetConflictError(
+                    f"Conflicting asset destinations: {previous} and {asset}"
+                )
+
+    def register_asset(
+        self, package: str, source: str | Path, destination: str | Path
+    ) -> NodeAsset:
+        asset = NodeAsset(package, str(source), str(destination))
+        self._check_asset_conflict(asset)
+        self._assets[asset.destination] = asset
+        return asset
+
+    def _prepare_asset(self, asset: NodeAsset) -> tuple[Path, Path]:
+        try:
+            source = self.package(asset.package).resolve(asset.source)
+            target = destination_path(self.static_folder, asset.destination)
+            if (
+                source == target
+                or source.is_relative_to(target)
+                or target.is_relative_to(source)
+            ):
+                raise AssetResolutionError("Source and destination overlap.")
+            validate_tree(source)
+            if target.exists():
+                validate_tree(target)
+                if source.is_dir() != target.is_dir():
+                    raise AssetPublicationError(
+                        f"Source/destination types differ: {target}"
+                    )
+            return source, target
+        except (OSError, RuntimeError) as exc:
+            raise AssetPublicationError(f"Cannot validate {asset}: {exc}") from exc
+
+    def _publish(self, asset: NodeAsset, source: Path, target: Path) -> Path:
+        try:
+            publish(source, target)
+        except (OSError, shutil.Error) as exc:
+            raise AssetPublicationError(f"Cannot publish {asset}: {exc}") from exc
+        return target
+
+    def publish_asset(
+        self, package: str, source: str | Path, destination: str | Path
+    ) -> Path:
+        asset = NodeAsset(package, str(source), str(destination))
+        self._check_asset_conflict(asset)
+        resolved_source, target = self._prepare_asset(asset)
+        return self._publish(asset, resolved_source, target)
+
+    def publish_assets(self) -> tuple[Path, ...]:
+        if self.static_folder is None:
+            raise AssetPublicationError("No Flask static folder is configured.")
+        prepared = [(asset, *self._prepare_asset(asset)) for asset in self.assets]
+        return tuple(self._publish(*entry) for entry in prepared)
 
     @property
     def requirements(self) -> dict[str, Dependency]:
@@ -236,7 +310,7 @@ class NodeManager:
             data = json.loads(manifest.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get("version"), str):
                 raise TypeError("missing package version")
-        except (OSError, TypeError) as exc:
+        except (OSError, TypeError, ValueError) as exc:
             raise PackageNotFoundError(
                 f"Package {name!r} is not installed or has an invalid manifest."
             ) from exc

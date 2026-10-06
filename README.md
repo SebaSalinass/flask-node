@@ -197,9 +197,10 @@ print(package.name, package.version, package.root)
 ```
 
 The consumer must initialize Flask-Node first. It owns its library-specific
-configuration, rendering, asset copying/serving, and build/watch commands.
-Flask-Node only declares/installs dependencies, executes commands, and locates
-files. No registration protocol is needed.
+configuration, asset selection, rendering, and build/watch commands. Flask serves
+published assets through its configured static route.
+Flask-Node declares/installs dependencies, executes commands, locates package
+files, and publishes explicitly selected assets.
 
 Package lookup supports ordinary and scoped registry names. Asset lookup returns
 an existing `Path`; absolute paths, parent traversal, Windows-style paths, and
@@ -208,6 +209,89 @@ linked packages are intentionally unsupported. Missing or malformed installed
 packages raise `PackageNotFoundError`; unsafe or missing assets raise
 `AssetResolutionError`. This is filesystem path validation, not protection
 against concurrent malicious filesystem changes.
+
+## Publishing browser assets
+
+Consuming extensions choose which npm dependencies and browser assets they need.
+During their `init_app()`, after Flask-Node is initialized, they can register:
+
+```python
+manager = node.get_manager(app)
+manager.require("some-package", version="^1")
+asset = manager.register_asset(
+    package="some-package",
+    source="dist/library.js",
+    destination="vendor/library/library.js",
+)
+manager.register_asset(
+    package="some-package",
+    source="dist/images",
+    destination="vendor/library/images",
+)
+```
+
+Registration validates declarations and records them on the application's
+manager. It does not copy files, require installed packages, change the manifest,
+or run npm. Requirements and assets are registered separately. `manager.assets`
+and `node.assets` expose a sorted tuple of immutable `NodeAsset` declarations.
+Identical registrations deduplicate; different sources targeting the same
+normalized destination or overlapping parent/child destinations raise
+`AssetConflictError`.
+
+Reconstruct the environment and publish explicitly:
+
+```bash
+pip install -e .
+flask --app your_app node sync
+flask --app your_app node publish
+```
+
+This copies selected files from `.node/node_modules/` into Flask's actual
+configured `static_folder`. The CLI reports each package, source, destination,
+and the total count. `sync` does not publish. Publishing does not run npm.
+The default result above is `static/vendor/library/library.js` and a recursive
+copy of the images directory. Custom Flask static folders are supported; static
+serving disabled with `static_folder=None` produces a clear publication error.
+A missing static directory is created during publication.
+
+Python callers can use `manager.publish_assets()` / `node.publish_assets()` to
+publish registrations and receive a tuple of destination `Path` objects.
+`publish_asset(package, source, destination)` immediately publishes one asset
+without registering it and returns its destination `Path`.
+
+Files are replaced; registered directories are replaced completely, removing
+stale files. Unrelated static files are preserved. File/directory type mismatches
+fail clearly. Sources and destinations are preflighted before any batch copy;
+copies are staged beside each destination and the previous destination is
+restored if the final rename fails. A batch is not transactional: earlier assets
+may already be updated if a later filesystem operation fails.
+
+Sources resolve through the existing installed-package API. Absolute paths,
+parent traversal, Windows drive paths, empty/root paths, and backslashes are
+rejected. Resolved destinations must remain within the configured static root.
+Directory source trees reject symlinks and special files; destination paths and
+existing destination trees reject symlinks below the static root. The configured
+static folder's resolved path defines that root. Source/destination overlap is
+rejected. These checks do not protect against concurrent malicious filesystem
+changes. Missing packages/assets and publication failures raise Flask-Node
+errors, including `AssetPublicationError` for filesystem copy failures.
+
+Consumers can use the registered static filename with Flask:
+
+```python
+from flask import url_for
+
+url = url_for("static", filename=asset.destination)
+```
+
+HTML/Jinja rendering stays with the consuming extension. Flask-Node has no
+library-specific asset selection, bundling, or rendering behavior.
+
+Both `.node/` and registered `static/vendor/` destinations are generated,
+reconstructable state. Applications can generally ignore them in Git, while
+committing application source, Python dependencies, and `pyproject.toml`.
+Flask-Node does not edit `.gitignore`. Exact dependency-tree reconstruction still
+requires preserving a matching npm lockfile as described above.
 
 ## Development
 
