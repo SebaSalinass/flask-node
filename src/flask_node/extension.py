@@ -26,6 +26,7 @@ class Node:
             )
         defaults = {
             "NODE_DIR": ".node",
+            "NODE_PYPROJECT": "pyproject.toml",
             "NODE_BIN": "node",
             "NODE_NPM_BIN": "npm",
             "NODE_NPX_BIN": "npx",
@@ -41,12 +42,19 @@ class Node:
         for key in ("NODE_BIN", "NODE_NPM_BIN", "NODE_NPX_BIN"):
             if not isinstance(app.config[key], str) or not app.config[key].strip():
                 raise ConfigurationError(f"{key} must be a nonempty executable path.")
+        project_value = app.config["NODE_PYPROJECT"]
+        if not isinstance(project_value, (str, Path)) or not str(project_value).strip():
+            raise ConfigurationError("NODE_PYPROJECT must be a nonempty path.")
+        pyproject = Path(project_value)
+        if not pyproject.is_absolute():
+            pyproject = Path(app.root_path) / pyproject
         app.extensions["node"] = NodeManager(
             directory,
             node_bin=app.config["NODE_BIN"],
             npm_bin=app.config["NODE_NPM_BIN"],
             npx_bin=app.config["NODE_NPX_BIN"],
             runner=self._runner,
+            pyproject=pyproject.resolve(),
         )
         from .cli import node_cli
 
@@ -65,6 +73,13 @@ class Node:
 
     def require(self, name: str, version: str = "*", *, dev: bool = False) -> None:
         return self.get_manager().require(name, version, dev=dev)
+
+    @property
+    def requirements(self):
+        return self.get_manager().requirements
+
+    def sync(self, *, capture_output: bool = True) -> CommandResult:
+        return self.get_manager().sync(capture_output=capture_output)
 
     def install(
         self,

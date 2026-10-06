@@ -38,6 +38,7 @@ outside a context. Duplicate registration raises `ConfigurationError`.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `NODE_DIR` | `.node` | Relative to `app.root_path`, or an absolute path |
+| `NODE_PYPROJECT` | `pyproject.toml` | Application configuration, relative to `app.root_path` or absolute |
 | `NODE_BIN` | `node` | Node executable name or path |
 | `NODE_NPM_BIN` | `npm` | npm executable name or path |
 | `NODE_NPX_BIN` | `npx` | npx executable name or path |
@@ -45,6 +46,56 @@ outside a context. Duplicate registration raises `ConfigurationError`.
 Configure before calling `init_app()`. Configuration is captured per app.
 For a directory beside an application package, configure an absolute project
 path. No behavior depends on the shell's current directory.
+
+## Declarative application requirements
+
+Commit your application's `pyproject.toml` with:
+
+```toml
+[tool.flask-node]
+version = 1
+
+[tool.flask-node.packages]
+leaflet = "^1.9"
+"chart.js" = "^4.5"
+
+[tool.flask-node.dev-packages]
+tailwindcss = "^4.1"
+"@tailwindcss/cli" = "^4.1"
+```
+
+Configuration is read and validated during `init_app()`, without creating files
+or running npm. A missing file or table means no application declarations.
+Unknown settings, unsupported schema versions, and invalid declarations fail
+clearly. For a packaged Flask application, set `NODE_PYPROJECT` to the project
+file (for example `../pyproject.toml`); paths never depend on the shell directory.
+Restart the application after changing declarations.
+
+Extensions continue to call `require()`. Their requirements remain in memory
+and are never written to the application's TOML. `manager.requirements` (also
+`node.requirements` in an app context) returns a sorted snapshot of the combined
+requirements. Identical version strings and dependency sections merge; all other
+duplicates raise `DependencyConflictError`, including potentially overlapping
+semver ranges. Flask-Node does not attempt npm semver resolution.
+
+```bash
+flask --app your_app node sync
+```
+
+`sync()` generates a deterministic, private `.node/package.json` containing
+exactly the effective declarations, then runs `npm install`. It removes stale
+manifest dependencies and custom metadata/scripts. Declare every needed direct
+package in TOML or in its owning extension before using sync. The `.node/`
+directory is disposable: deleting it and running sync reconstructs the project.
+Commit the TOML and Python dependencies; the generated manifest need not be
+committed. The existing install/uninstall and raw npm APIs are imperative tools:
+they do not persist application declarations, and their changes are lost on sync.
+
+Version ranges reconstruct the requirements, but can resolve to newer releases.
+For an identical dependency tree, preserve a matching npm lockfile separately,
+restore it to `.node/package-lock.json`, generate the manifest with `sync()`
+(which runs npm install), and use `ci()` for subsequent locked installs. npm owns
+lockfile consistency and transitive resolution. No npm operation runs at startup.
 
 ## Lifecycle and dependencies
 
@@ -87,8 +138,9 @@ installation artifacts; operations are not transactional.
 
 `ci()` requires `package-lock.json` and declarations matching the manifest, then
 runs `npm ci` without rewriting the manifest. npm validates lockfile consistency.
-Commit `.node/package.json` and `.node/package-lock.json` for reproducible builds;
-ignore `.node/node_modules/`.
+For imperative workflows, preserve the manifest and lockfile for locked builds.
+For declarative workflows, the manifest is generated and the lockfile must be
+preserved separately if exact dependency-tree reproducibility is needed.
 
 ## Commands and diagnostics
 
@@ -117,6 +169,7 @@ directory is not a process sandbox; invoked tools can write elsewhere.
 
 ```bash
 flask --app your_app node init
+flask --app your_app node sync
 flask --app your_app node install
 flask --app your_app node install example --version '^1' --dev
 flask --app your_app node uninstall example

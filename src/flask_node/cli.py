@@ -35,6 +35,13 @@ def initialize(manager):
 
 
 @node_cli.command()
+@operation
+def sync(manager):
+    """Rebuild the managed manifest from application and extension declarations."""
+    manager.sync(capture_output=False)
+
+
+@node_cli.command()
 @click.argument("package", required=False)
 @click.option("--version")
 @click.option("--dev", is_flag=True)

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Flask-Node"
-version = "0.1.0"
+version = "0.1.1"
 description = "Isolated Node/npm infrastructure for Flask extensions"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["Flask>=2.2,<4"]
+dependencies = ["Flask>=2.2,<4", "tomli>=2; python_version < '3.11'"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

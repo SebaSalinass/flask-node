@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .config import read_configuration
 from .exceptions import (
     AssetResolutionError,
     ConfigurationError,
@@ -31,11 +32,39 @@ class NodeManager:
         npm_bin: str = "npm",
         npx_bin: str = "npx",
         runner: CommandRunner | None = None,
+        pyproject: Path | None = None,
     ):
         self.directory = directory.resolve()
         self.node_bin, self.npm_bin, self.npx_bin = node_bin, npm_bin, npx_bin
         self.runner = runner if runner is not None else CommandRunner()
         self._requirements: dict[str, Dependency] = {}
+        self._application_requirements: dict[str, Dependency] = {}
+        if pyproject is not None:
+            config = read_configuration(pyproject)
+            for section, dev in (("packages", False), ("dev-packages", True)):
+                for name, version in config.get(section, {}).items():
+                    self.require(name, version, dev=dev)
+            self._application_requirements = self._requirements.copy()
+            self._requirements.clear()
+
+    @property
+    def requirements(self) -> dict[str, Dependency]:
+        """Return a sorted snapshot of effective application/extension requirements."""
+        return dict(
+            sorted((self._application_requirements | self._requirements).items())
+        )
+
+    def sync(self, *, capture_output: bool = True) -> CommandResult:
+        """Generate a disposable manifest from declarations and run npm install."""
+        data: dict[str, Any] = {
+            "private": True,
+            "dependencies": {},
+            "devDependencies": {},
+        }
+        self._merge_requirements(data)
+        self.initialize()
+        self._write_manifest(data)
+        return self.npm("install", capture_output=capture_output)
 
     @property
     def manifest_path(self) -> Path:
@@ -88,7 +117,7 @@ class NodeManager:
         validate_name(name)
         self._validate_version(version)
         dependency = Dependency(version, dev)
-        previous = self._requirements.get(name)
+        previous = self.requirements.get(name)
         if previous is not None and previous != dependency:
             raise DependencyConflictError(
                 f"Conflicting requirements for {name}: {previous} and {dependency}"
@@ -101,7 +130,7 @@ class NodeManager:
             raise ConfigurationError("A dependency version must be a nonempty string.")
 
     def _merge_requirements(self, data: dict[str, Any]) -> dict[str, Any]:
-        for name, dependency in self._requirements.items():
+        for name, dependency in self.requirements.items():
             section = "devDependencies" if dependency.dev else "dependencies"
             other = "dependencies" if dependency.dev else "devDependencies"
             data.setdefault(other, {}).pop(name, None)
@@ -122,7 +151,7 @@ class NodeManager:
             validate_name(name)
             if version is not None:
                 self._validate_version(version)
-            required = self._requirements.get(name)
+            required = self.requirements.get(name)
             if required and (
                 required.dev != dev
                 or (version is not None and version != required.version)
@@ -147,7 +176,7 @@ class NodeManager:
 
     def uninstall(self, name: str, *, capture_output: bool = True) -> CommandResult:
         validate_name(name)
-        if name in self._requirements:
+        if name in self.requirements:
             raise DependencyConflictError(
                 f"Cannot uninstall actively required package {name}."
             )
@@ -179,7 +208,7 @@ class NodeManager:
                 "npm ci requires package-lock.json. Run 'flask node install' first."
             )
         data = self._read_manifest()
-        for name, dependency in self._requirements.items():
+        for name, dependency in self.requirements.items():
             section = "devDependencies" if dependency.dev else "dependencies"
             other = "dependencies" if dependency.dev else "devDependencies"
             if data.get(section, {}).get(
